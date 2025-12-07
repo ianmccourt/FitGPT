@@ -46,7 +46,13 @@ Create a structured weekly workout plan that:
 7. Provides progressive overload suggestions
 
 ## Output Format
-Respond with ONLY a valid JSON object (no markdown, no code blocks, no explanations) in this exact format:
+CRITICAL: You MUST respond with ONLY a valid JSON object. Do NOT include any markdown code blocks, explanations, or additional text. The response must be valid JSON that can be parsed directly. Ensure:
+- All strings are properly quoted
+- No trailing commas in arrays or objects
+- All brackets and braces are properly closed
+- No comments or explanatory text
+
+Respond in this exact format:
 
 {
   "weeklySchedule": [
@@ -111,7 +117,51 @@ function parseWorkoutPlan(jsonString: string, profile: UserProfile): WorkoutPlan
   }
   cleanJson = cleanJson.trim();
 
-  const parsed = JSON.parse(cleanJson);
+  // Try to extract JSON object if there's extra text around it
+  // Look for the first { and last } to extract the JSON object
+  const firstBrace = cleanJson.indexOf('{');
+  const lastBrace = cleanJson.lastIndexOf('}');
+  
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
+  }
+
+  // Fix common JSON issues
+  // Remove trailing commas before closing brackets/braces
+  cleanJson = cleanJson.replace(/,(\s*[}\]])/g, '$1');
+  
+  // Remove comments (single-line and multi-line)
+  cleanJson = cleanJson.replace(/\/\/.*$/gm, ''); // Single-line comments
+  cleanJson = cleanJson.replace(/\/\*[\s\S]*?\*\//g, ''); // Multi-line comments
+
+  let parsed;
+  try {
+    parsed = JSON.parse(cleanJson);
+  } catch (error) {
+    // Provide more helpful error message
+    const errorMessage = error instanceof Error ? error.message : 'Unknown JSON parsing error';
+    const errorPosition = errorMessage.match(/position (\d+)/);
+    
+    if (errorPosition) {
+      const pos = parseInt(errorPosition[1], 10);
+      const start = Math.max(0, pos - 200);
+      const end = Math.min(cleanJson.length, pos + 200);
+      const snippet = cleanJson.substring(start, end);
+      const relativePos = pos - start;
+      
+      throw new Error(
+        `Invalid JSON in API response: ${errorMessage}\n` +
+        `Problem area (position ${pos}):\n` +
+        `${snippet.substring(0, relativePos)}<--HERE-->${snippet.substring(relativePos)}\n\n` +
+        `Please try generating the plan again. If the issue persists, the API may be returning malformed JSON.`
+      );
+    }
+    
+    throw new Error(
+      `Failed to parse JSON response: ${errorMessage}\n` +
+      `Please try generating the plan again.`
+    );
+  }
 
   // Transform the parsed data into our format
   const weeklySchedule: DailyWorkout[] = parsed.weeklySchedule.map((day: any) => ({
@@ -199,7 +249,7 @@ export async function generateWorkoutPlan(
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 4096,
+        max_tokens: 8192,
         messages: [
           {
             role: 'user',
